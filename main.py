@@ -168,6 +168,73 @@ def read_root():
 def read_item(nombre: str):
     return {"saludo": f"Hola {nombre}, bienvenido a FastAPI"}
 
+@app.get("/registros/municipio/{municipio_id}")
+def get_registros_municipio_por_id(municipio_id: int):
+    """
+    Obtiene todos los registros de análisis químicos por ID de municipio
+    """
+    connection = None
+    try:
+        connection = get_db_connection()
+        
+        # Consulta SQL para obtener todos los registros del municipio
+        query = """
+        SELECT * 
+        FROM analisis_quimicos_validados 
+        WHERE municipio_id_FK = %s
+        ORDER BY id
+        """
+        
+        # Leer datos en DataFrame
+        df = pd.read_sql(query, connection, params=[municipio_id])
+        
+        if df.empty:
+            return {
+                "municipio_id": municipio_id,
+                "mensaje": "No hay registros para este municipio",
+                "registros": [],
+                "total_registros": 0
+            }
+        
+        # Obtener información del municipio
+        info_query = """
+        SELECT DISTINCT municipio 
+        FROM analisis_quimicos_validados 
+        WHERE municipio_id_FK = %s 
+        LIMIT 1
+        """
+        info_df = pd.read_sql(info_query, connection, params=[municipio_id])
+        
+        municipio_nombre = info_df['municipio'].iloc[0] if 'municipio' in info_df.columns else "Desconocido"
+        
+        # Convertir DataFrame a lista de diccionarios
+        registros = df.to_dict('records')
+        
+        # Convertir tipos numéricos a float para evitar problemas de serialización
+        for registro in registros:
+            for key, value in registro.items():
+                if pd.isna(value):
+                    registro[key] = None
+                elif isinstance(value, (int, float)):
+                    registro[key] = float(value)
+        
+        resultado = {
+            "municipio_id": municipio_id,
+            "municipio_nombre": municipio_nombre,
+            "total_registros": int(len(df)),
+            "registros": registros
+        }
+        
+        return resultado
+        
+    except Error as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+    finally:
+        if connection and connection.is_connected():
+            connection.close()
+
 @app.get("/interpretacion/municipio/{municipio_id}")
 def get_interpretacion_municipio_por_id(municipio_id: int):
     """
@@ -419,6 +486,7 @@ def get_estadisticas_todos_municipios():
             resultados.append({
                 "municipio_id": int(municipio_id),
                 "municipio_nombre": municipio_nombre,
+                "registros_url": f"/registros/municipio/{municipio_id}",
                 "estadisticas_por_id_url": f"/estadisticas/municipio/{municipio_id}",
                 "estadisticas_por_nombre_url": f"/estadisticas/municipio/nombre/{municipio_nombre.replace(' ', '%20')}",
                 "interpretacion_por_id_url": f"/interpretacion/municipio/{municipio_id}",
